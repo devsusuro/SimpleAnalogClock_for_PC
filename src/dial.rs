@@ -82,11 +82,11 @@ pub enum Design {
 impl Design {
     pub const ALL: [Self; 3] = [Self::Ivory, Self::Charcoal, Self::Navy];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self, language: crate::Language) -> &'static str {
         match self {
-            Self::Ivory => "아이보리",
-            Self::Charcoal | Self::LegacySteel => "차콜",
-            Self::Navy => "네이비",
+            Self::Ivory => language.text("아이보리", "Ivory"),
+            Self::Charcoal | Self::LegacySteel => language.text("차콜", "Charcoal"),
+            Self::Navy => language.text("네이비", "Navy"),
         }
     }
 
@@ -223,7 +223,14 @@ impl NumeralFont {
 }
 
 impl HandStyle {
-    pub const CHOICES: [(Self, &'static str); 2] = [(Self::Thick, "두툼"), (Self::Pointed, "뾰족")];
+    pub const ALL: [Self; 2] = [Self::Thick, Self::Pointed];
+
+    pub fn label(self, language: crate::Language) -> &'static str {
+        match self {
+            Self::Thick => language.text("두툼", "Rounded"),
+            Self::Pointed => language.text("뾰족", "Pointed"),
+        }
+    }
 }
 
 type Rgb = [u8; 3];

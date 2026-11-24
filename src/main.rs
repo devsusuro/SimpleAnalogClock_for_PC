@@ -1,6 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod dial;
+mod language;
 mod placement;
 mod settings_file;
 
@@ -18,6 +19,7 @@ use dial::{
     Appearance, ClockFace, ClockTime, Design, FONT_BYTES, HandAppearance, HandStyle,
     NumeralAppearance, NumeralFont,
 };
+use language::Language;
 use placement::{Drag, Placement};
 use settings_file::SettingsFile;
 
@@ -34,9 +36,15 @@ const MIN_NUMERAL_SIZE: u8 = 70;
 const MAX_NUMERAL_SIZE: u8 = 125;
 const UI_FONT_SIZE: f32 = 11.0 * 96.0 / 72.0;
 const MENU_FONT_SIZE: f32 = 12.0 * 96.0 / 72.0;
-const OPTIONS_SIZE: egui::Vec2 = egui::vec2(374.0, 564.0);
-const MENU_SIZE: egui::Vec2 = egui::vec2(150.0, 134.0);
-const OPACITY_MENU_SIZE: egui::Vec2 = egui::vec2(100.0, 146.0);
+const MENU_SIZE: egui::Vec2 = egui::vec2(150.0, 162.0);
+
+fn options_size(language: Language) -> egui::Vec2 {
+    let width = match language {
+        Language::Korean => 374.0,
+        Language::English => 424.0,
+    };
+    egui::vec2(width, 564.0)
+}
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Serialize)]
 enum Opacity {
@@ -154,6 +162,7 @@ impl ClockOptions {
 #[derive(Clone, Copy)]
 struct Settings {
     clock: ClockOptions,
+    language: Language,
     opacity: Opacity,
     position: Option<egui::Pos2>,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -164,6 +173,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             clock: ClockOptions::default(),
+            language: Language::default(),
             opacity: Opacity::Full,
             position: None,
             #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -254,11 +264,13 @@ impl OptionsDialog {
         ctx: &egui::Context,
         viewport: ViewportBuilder,
         preview: &mut ClockFace,
+        language: Language,
     ) -> Option<bool> {
         let mut result = None;
+        let title = language.text("옵션", "Options");
         let viewport = viewport
-            .with_title(format!("{APP_NAME} — 옵션"))
-            .with_inner_size(OPTIONS_SIZE)
+            .with_title(format!("{APP_NAME} — {title}"))
+            .with_inner_size(options_size(language))
             .with_resizable(false);
         let viewport = if let Some(position) = self.position {
             viewport.with_position(position)
@@ -270,9 +282,11 @@ impl OptionsDialog {
             viewport,
             |ctx, class| {
                 if class == egui::ViewportClass::Embedded {
-                    egui::Window::new("옵션").show(ctx, |ui| {
-                        result = self.contents(ui, preview);
-                    });
+                    egui::Window::new(title)
+                        .id(egui::Id::new("options"))
+                        .show(ctx, |ui| {
+                            result = self.contents(ui, preview, language);
+                        });
                     return;
                 }
                 if self.focus_on_open {
@@ -281,7 +295,7 @@ impl OptionsDialog {
                 }
                 egui::CentralPanel::default()
                     .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(16.0))
-                    .show(ctx, |ui| result = self.contents(ui, preview));
+                    .show(ctx, |ui| result = self.contents(ui, preview, language));
                 if ctx.input(|input| {
                     input.viewport().close_requested() || input.key_pressed(egui::Key::Escape)
                 }) {
@@ -292,7 +306,12 @@ impl OptionsDialog {
         result
     }
 
-    fn contents(&mut self, ui: &mut egui::Ui, preview: &mut ClockFace) -> Option<bool> {
+    fn contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        preview: &mut ClockFace,
+        language: Language,
+    ) -> Option<bool> {
         let enter_pressed =
             ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
         ui.spacing_mut().item_spacing.y = 10.0;
@@ -316,7 +335,7 @@ impl OptionsDialog {
             .num_columns(2)
             .spacing(egui::vec2(12.0, 13.0))
             .show(ui, |ui| {
-                ui.label("시계 크기");
+                ui.label(language.text("시계 크기", "Clock Size"));
                 option_slider(
                     ui,
                     &mut self.draft.diameter,
@@ -325,18 +344,22 @@ impl OptionsDialog {
                 );
                 ui.end_row();
 
-                ui.label("디자인");
+                ui.label(language.text("디자인", "Design"));
                 egui::ComboBox::from_id_salt("clock_design")
                     .width(230.0)
-                    .selected_text(self.draft.design.label())
+                    .selected_text(self.draft.design.label(language))
                     .show_ui(ui, |ui| {
                         for design in Design::ALL {
-                            ui.selectable_value(&mut self.draft.design, design, design.label());
+                            ui.selectable_value(
+                                &mut self.draft.design,
+                                design,
+                                design.label(language),
+                            );
                         }
                     });
                 ui.end_row();
 
-                ui.label("바늘 두께");
+                ui.label(language.text("바늘 두께", "Hand Thickness"));
                 option_slider(
                     ui,
                     &mut self.draft.hand_width,
@@ -345,11 +368,14 @@ impl OptionsDialog {
                 );
                 ui.end_row();
 
-                ui.label("숫자 표시");
-                ui.checkbox(&mut self.draft.numeral_visible, "표시");
+                ui.label(language.text("숫자 표시", "Show Numerals"));
+                ui.checkbox(
+                    &mut self.draft.numeral_visible,
+                    language.text("표시", "Show"),
+                );
                 ui.end_row();
 
-                ui.label("숫자 글꼴");
+                ui.label(language.text("숫자 글꼴", "Numeral Font"));
                 ui.add_enabled_ui(self.draft.numeral_visible, |ui| {
                     egui::ComboBox::from_id_salt("numeral_font")
                         .width(230.0)
@@ -366,7 +392,7 @@ impl OptionsDialog {
                 });
                 ui.end_row();
 
-                ui.label("글꼴 크기");
+                ui.label(language.text("글꼴 크기", "Font Size"));
                 ui.add_enabled_ui(self.draft.numeral_visible, |ui| {
                     ui.horizontal(|ui| {
                         option_slider(
@@ -375,20 +401,23 @@ impl OptionsDialog {
                             MIN_NUMERAL_SIZE..=MAX_NUMERAL_SIZE,
                             "%",
                         );
-                        ui.toggle_value(&mut self.draft.numeral_bold, "굵게");
+                        ui.toggle_value(
+                            &mut self.draft.numeral_bold,
+                            language.text("굵게", "Bold"),
+                        );
                     });
                 });
                 ui.end_row();
 
-                ui.label("바늘 모양");
+                ui.label(language.text("바늘 모양", "Hand Shape"));
                 ui.horizontal(|ui| {
-                    for (style, name) in HandStyle::CHOICES {
-                        ui.selectable_value(&mut self.draft.hands, style, name);
+                    for style in HandStyle::ALL {
+                        ui.selectable_value(&mut self.draft.hands, style, style.label(language));
                     }
                 });
                 ui.end_row();
 
-                ui.label("테두리 두께");
+                ui.label(language.text("테두리 두께", "Border Thickness"));
                 ui.horizontal(|ui| {
                     let automatic_width =
                         dial::automatic_rim_width(f32::from(self.draft.diameter)).round() as u8;
@@ -398,17 +427,18 @@ impl OptionsDialog {
                         self.draft.rim_width = Some(width);
                     }
                     let automatic = self.draft.rim_width.is_none();
-                    if ui.selectable_label(automatic, "자동").clicked() {
+                    if ui
+                        .selectable_label(automatic, language.text("자동", "Auto"))
+                        .clicked()
+                    {
                         self.draft.rim_width = automatic.then_some(width);
                     }
                 });
                 ui.end_row();
 
-                ui.label("시간 기준");
-                let zone_label = self
-                    .draft
-                    .time_zone
-                    .map_or("현재 컴퓨터 시간", |zone| zone.name());
+                ui.label(language.text("시간 기준", "Time Source"));
+                let local_time = language.text("현재 컴퓨터 시간", "Current computer time");
+                let zone_label = self.draft.time_zone.map_or(local_time, |zone| zone.name());
                 egui::ComboBox::from_id_salt("time_zone")
                     .width(230.0)
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -416,10 +446,10 @@ impl OptionsDialog {
                     .show_ui(ui, |ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.zone_filter)
-                                .hint_text("시간대 검색"),
+                                .hint_text(language.text("시간대 검색", "Search time zones")),
                         );
                         if ui
-                            .selectable_label(self.draft.time_zone.is_none(), "현재 컴퓨터 시간")
+                            .selectable_label(self.draft.time_zone.is_none(), local_time)
                             .clicked()
                         {
                             self.draft.time_zone = None;
@@ -451,15 +481,21 @@ impl OptionsDialog {
                 ui.end_row();
 
                 if self.snap_available {
-                    ui.label("이동");
-                    ui.checkbox(&mut self.draft.snap_to_edges, "가장자리 붙이기");
+                    ui.label(language.text("이동", "Movement"));
+                    ui.checkbox(
+                        &mut self.draft.snap_to_edges,
+                        language.text("가장자리 붙이기", "Snap to Edges"),
+                    );
                     ui.end_row();
                 }
             });
         if self.save_failed {
             ui.colored_label(
                 ui.visuals().error_fg_color,
-                "INI 설정 파일을 저장할 수 없습니다.",
+                language.text(
+                    "INI 설정 파일을 저장할 수 없습니다.",
+                    "Could not save the INI settings file.",
+                ),
             );
         }
         let button_height = ui.spacing().interact_size.y.max(
@@ -477,10 +513,10 @@ impl OptionsDialog {
                 )
                 .size()
                 .x;
-            let cancel = ui.button("취소");
-            let confirm = ui.button("확인(Enter)");
+            let cancel = ui.button(language.text("취소", "Cancel"));
+            let confirm = ui.button(language.text("확인(Enter)", "OK (Enter)"));
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                if ui.button("초기화").clicked() {
+                if ui.button(language.text("초기화", "Reset")).clicked() {
                     self.draft = ClockOptions::default();
                     self.zone_filter.clear();
                     ui.ctx().request_repaint();
@@ -502,9 +538,47 @@ enum MenuAction {
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     ToggleTop,
     SetOpacity(Opacity),
+    SetLanguage(Language),
     OpenOptions,
     CloseClock,
     Dismiss,
+}
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+enum Submenu {
+    Language,
+    Opacity,
+}
+
+impl Submenu {
+    fn label(self, language: Language) -> &'static str {
+        match self {
+            Self::Language => language.text("언어", "Language"),
+            Self::Opacity => language.text("불투명도", "Opacity"),
+        }
+    }
+
+    fn size(self) -> egui::Vec2 {
+        match self {
+            Self::Language => egui::vec2(120.0, 66.0),
+            Self::Opacity => egui::vec2(100.0, 146.0),
+        }
+    }
+
+    fn contents(self, ui: &mut egui::Ui, settings: &Settings) -> Option<MenuAction> {
+        menu_font(ui);
+        match self {
+            Self::Language => menu_choices(
+                ui,
+                settings.language,
+                Language::ALL.map(|language| (language, language.label())),
+            )
+            .map(MenuAction::SetLanguage),
+            Self::Opacity => {
+                menu_choices(ui, settings.opacity, Opacity::VALUES).map(MenuAction::SetOpacity)
+            }
+        }
+    }
 }
 
 struct ClockMenu {
@@ -512,7 +586,7 @@ struct ClockMenu {
     pointer: egui::Pos2,
     focus_lost_at: Option<Instant>,
     was_focused: bool,
-    opacity_row_top: Option<f32>,
+    submenu: Option<(Submenu, f32)>,
 }
 
 impl ClockMenu {
@@ -520,38 +594,39 @@ impl ClockMenu {
         let position = self.placement.menu_position(self.pointer, MENU_SIZE);
         let parent = ctx.show_viewport_immediate(
             egui::ViewportId::from_hash_of("clock_menu"),
-            menu_window("시계 메뉴", MENU_SIZE, position),
+            menu_window(
+                settings.language.text("시계 메뉴", "Clock Menu"),
+                MENU_SIZE,
+                position,
+            ),
             |ctx, _| {
-                let mut row = None;
+                let mut rows = Vec::with_capacity(2);
                 let action = menu_panel(ctx, |ui| {
-                    clock_menu(ui, settings, |ui| {
-                        row = Some(ui.add(egui::Button::new("불투명도").right_text("⏵")));
+                    clock_menu(ui, settings, |ui, submenu| {
+                        let row = ui.add(
+                            egui::Button::new(submenu.label(settings.language)).right_text("⏵"),
+                        );
+                        rows.push((submenu, row));
                         None
                     })
                 });
-                (menu_state(ctx, action), row, ctx.pointer_hover_pos())
+                (menu_state(ctx, action), rows, ctx.pointer_hover_pos())
             },
         );
-        let ((mut focused, action), opacity_row, pointer) = parent;
+        let ((mut focused, action), rows, pointer) = parent;
         if action.is_some() {
             return action;
         }
-        if let Some(row) = opacity_row {
-            self.update_opacity_hover(&row, pointer);
-        }
-        if let Some(top) = self.opacity_row_top {
-            let position =
-                self.placement
-                    .submenu_position(position, MENU_SIZE, top, OPACITY_MENU_SIZE);
+        self.update_submenu_hover(&rows, pointer);
+        if let Some((submenu, top)) = self.submenu {
+            let size = submenu.size();
+            let position = self
+                .placement
+                .submenu_position(position, MENU_SIZE, top, size);
             let (child_focused, action) = ctx.show_viewport_immediate(
-                egui::ViewportId::from_hash_of("opacity_menu"),
-                menu_window("불투명도", OPACITY_MENU_SIZE, position).with_active(false),
-                |ctx, _| {
-                    menu_state(
-                        ctx,
-                        menu_panel(ctx, |ui| opacity_menu(ui, settings.opacity)),
-                    )
-                },
+                egui::ViewportId::from_hash_of(("clock_submenu", submenu)),
+                menu_window(submenu.label(settings.language), size, position).with_active(false),
+                |ctx, _| menu_state(ctx, menu_panel(ctx, |ui| submenu.contents(ui, settings))),
             );
             if action.is_some() {
                 return action;
@@ -575,13 +650,21 @@ impl ClockMenu {
         None
     }
 
-    fn update_opacity_hover(&mut self, row: &egui::Response, pointer: Option<egui::Pos2>) {
-        if row.hovered() || row.clicked() {
-            self.opacity_row_top = Some(row.rect.top());
-        } else if pointer
-            .is_some_and(|p| p.y < row.rect.top() - 4.0 || p.y > row.rect.bottom() + 4.0)
-        {
-            self.opacity_row_top = None;
+    fn update_submenu_hover(
+        &mut self,
+        rows: &[(Submenu, egui::Response)],
+        pointer: Option<egui::Pos2>,
+    ) {
+        if let Some((submenu, row)) = rows.iter().find(|(_, row)| row.hovered() || row.clicked()) {
+            self.submenu = Some((*submenu, row.rect.top()));
+        } else if let (Some((active, _)), Some(pointer)) = (self.submenu, pointer) {
+            let near_row = rows.iter().any(|(submenu, row)| {
+                *submenu == active
+                    && (row.rect.top() - 4.0..=row.rect.bottom() + 4.0).contains(&pointer.y)
+            });
+            if !near_row {
+                self.submenu = None;
+            }
         }
     }
 }
@@ -639,38 +722,48 @@ fn menu_font(ui: &mut egui::Ui) {
 fn clock_menu(
     ui: &mut egui::Ui,
     settings: &Settings,
-    show_opacity: impl FnOnce(&mut egui::Ui) -> Option<MenuAction>,
+    mut show_submenu: impl FnMut(&mut egui::Ui, Submenu) -> Option<MenuAction>,
 ) -> Option<MenuAction> {
     menu_font(ui);
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let _ = settings;
+    let language = settings.language;
+    if let Some(action) = show_submenu(ui, Submenu::Language) {
+        return Some(action);
+    }
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         let mut always_on_top = settings.always_on_top;
-        if ui.checkbox(&mut always_on_top, "항상 위").changed() {
+        if ui
+            .checkbox(
+                &mut always_on_top,
+                language.text("항상 위", "Always on Top"),
+            )
+            .changed()
+        {
             return Some(MenuAction::ToggleTop);
         }
     }
-    let opacity = show_opacity(ui);
-    if opacity.is_some() {
-        return opacity;
+    if let Some(action) = show_submenu(ui, Submenu::Opacity) {
+        return Some(action);
     }
-    if ui.button("옵션").clicked() {
+    if ui.button(language.text("옵션", "Options")).clicked() {
         return Some(MenuAction::OpenOptions);
     }
     ui.separator();
-    ui.button("닫기")
+    ui.button(language.text("닫기", "Close"))
         .clicked()
         .then_some(MenuAction::CloseClock)
 }
 
-fn opacity_menu(ui: &mut egui::Ui, current: Opacity) -> Option<MenuAction> {
-    menu_font(ui);
+fn menu_choices<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    current: T,
+    choices: impl IntoIterator<Item = (T, &'static str)>,
+) -> Option<T> {
     let mut action = None;
-    for (value, label) in Opacity::VALUES {
+    for (value, label) in choices {
         let mut selected = current == value;
         if ui.checkbox(&mut selected, label).changed() {
-            action = Some(MenuAction::SetOpacity(value));
+            action = Some(value);
         }
     }
     action
@@ -757,9 +850,18 @@ impl ClockApp {
                 self.settings.opacity = value;
                 self.persist(true);
             }
+            MenuAction::SetLanguage(language) => {
+                self.settings.language = language;
+                if let (Some(dialog), Some(placement)) = (&mut self.dialog, placement) {
+                    let size = options_size(language);
+                    dialog.position =
+                        Some(placement.options_position(size + egui::vec2(16.0, 44.0)));
+                }
+                self.persist(true);
+            }
             MenuAction::OpenOptions => {
-                let position =
-                    placement.map(|p| p.options_position(OPTIONS_SIZE + egui::vec2(16.0, 44.0)));
+                let size = options_size(self.settings.language);
+                let position = placement.map(|p| p.options_position(size + egui::vec2(16.0, 44.0)));
                 let dialog = self.dialog.get_or_insert(OptionsDialog {
                     draft: self.settings.clock,
                     zone_filter: String::new(),
@@ -814,7 +916,7 @@ impl eframe::App for ClockApp {
                                 pointer: origin + pointer.to_vec2(),
                                 focus_lost_at: None,
                                 was_focused: false,
-                                opacity_row_top: None,
+                                submenu: None,
                             });
                         }
                     } else if response.clicked() {
@@ -822,9 +924,9 @@ impl eframe::App for ClockApp {
                     }
                 } else {
                     response.context_menu(|ui| {
-                        if let Some(action) = clock_menu(ui, &self.settings, |ui| {
-                            ui.menu_button("불투명도", |ui| {
-                                opacity_menu(ui, self.settings.opacity)
+                        if let Some(action) = clock_menu(ui, &self.settings, |ui, submenu| {
+                            ui.menu_button(submenu.label(self.settings.language), |ui| {
+                                submenu.contents(ui, &self.settings)
                             })
                             .inner
                             .flatten()
@@ -854,7 +956,9 @@ impl eframe::App for ClockApp {
             let viewport = ViewportBuilder::default();
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             let viewport = viewport.with_window_level(window_level(self.settings.always_on_top));
-            if let Some(apply) = dialog.show(ctx, viewport, &mut self.preview) {
+            if let Some(apply) =
+                dialog.show(ctx, viewport, &mut self.preview, self.settings.language)
+            {
                 if apply {
                     let previous = self.settings;
                     let draft = dialog.draft;

@@ -3,7 +3,7 @@ use std::{fmt::Write, fs, io, path::PathBuf};
 use eframe::egui::{Pos2, pos2};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::{Opacity, Settings};
+use crate::{Opacity, Settings, language::Language};
 
 pub struct SettingsFile {
     path: PathBuf,
@@ -60,6 +60,7 @@ fn decode(text: &str) -> Settings {
         };
         let value = value.trim();
         match key.trim().to_ascii_lowercase().as_str() {
+            "language" => settings.language = Language::from_ini(value),
             "time_zone" => settings.clock.time_zone = value.parse().ok(),
             "design" => read_enum(value, &mut settings.clock.design),
             "diameter" => read_number(value, &mut settings.clock.diameter),
@@ -114,6 +115,7 @@ fn encode(settings: &Settings) -> String {
     let mut line = |key: &str, value: &dyn std::fmt::Display| {
         let _ = writeln!(text, "{key}={value}");
     };
+    line("language", &settings.language.ini_value());
     line(
         "time_zone",
         &clock.time_zone.map_or("local", |zone| zone.name()),
