@@ -1029,6 +1029,10 @@ fn main() -> eframe::Result {
         .with_decorations(false)
         .with_transparent(true)
         .with_icon(dial::icon());
+    #[cfg(windows)]
+    {
+        viewport = viewport.with_taskbar(false);
+    }
     if let Some(position) = settings.position {
         viewport = viewport.with_position(position);
     }
