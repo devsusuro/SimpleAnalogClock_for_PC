@@ -21,28 +21,17 @@ impl Placement {
     }
 
     pub fn menu_position(self, pointer: Pos2, size: Vec2) -> Pos2 {
-        let right = self.clock.right().max(pointer.x) + GAP;
-        let below_pointer = pointer.y + GAP;
-        let preferred = pos2(right, below_pointer);
+        let mut position = pointer + Vec2::splat(GAP);
         let Some(area) = self.work_area else {
-            return preferred;
+            return position;
         };
-        if right + size.x <= area.right() {
-            return fit(area, preferred, size);
+        if position.x + size.x > area.right() {
+            position.x = pointer.x - GAP - size.x;
         }
-        let below = self.clock.bottom().max(pointer.y) + GAP;
-        if below + size.y <= area.bottom() {
-            return fit(area, pos2(pointer.x + GAP, below), size);
+        if position.y + size.y > area.bottom() {
+            position.y = pointer.y - GAP - size.y;
         }
-        let left = self.clock.left() - GAP - size.x;
-        if left >= area.left() {
-            return fit(area, pos2(left, below_pointer), size);
-        }
-        fit(
-            area,
-            pos2(pointer.x + GAP, self.clock.top() - GAP - size.y),
-            size,
-        )
+        fit(area, position, size)
     }
 
     pub fn options_position(self, size: Vec2) -> Pos2 {
