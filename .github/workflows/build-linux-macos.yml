@@ -1,0 +1,61 @@
+name: Build Linux and macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Optional source tag or branch, such as v0.1.13
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            label: linux-x86_64
+          - runner: macos-15
+            label: macos-arm64
+          - runner: macos-15-intel
+            label: macos-x86_64
+    env:
+      RELEASE_PLATFORM: ${{ matrix.label }}
+      RUST_VERSION: '1.100.0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+          persist-credentials: false
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libwayland-dev libx11-dev libxkbcommon-dev pkg-config
+
+      - name: Build the executable
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          cargo "+$RUST_VERSION" build --release --locked
+          file target/release/simple-analog-clock
+
+      - name: Package the build
+        run: |
+          version=$(cargo "+$RUST_VERSION" metadata --locked --format-version 1 --no-deps | python3 -c 'import json, sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "simple-analog-clock"))')
+          mkdir -p target/package
+          install -m 755 target/release/simple-analog-clock target/package/simple-analog-clock
+          cp assets/OFL*.txt target/package/
+          tar -czf "target/Simple-Analog-Clock-for-PC-v${version}-${RELEASE_PLATFORM}.tar.gz" -C target/package .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: simple-analog-clock-${{ matrix.label }}
+          path: target/Simple-Analog-Clock-for-PC-*.tar.gz
+          if-no-files-found: error
