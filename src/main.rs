@@ -885,6 +885,10 @@ impl eframe::App for ClockApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let (time, next_tick) = self.settings.clock.time();
         ctx.request_repaint_after(next_tick);
+        #[cfg(windows)]
+        if self.drag.is_none() {
+            placement::keep_clock_on_screen(frame);
+        }
         let placement = Placement::current(ctx, frame);
         if let Some(placement) = placement {
             self.settings.position = Some(placement.clock.min);

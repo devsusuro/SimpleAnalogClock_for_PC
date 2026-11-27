@@ -196,13 +196,13 @@ fn work_area(ctx: &egui::Context, frame: &eframe::Frame, _clock: Rect) -> Option
     let handle = window_handle(frame)?;
     // The frame owns the live HWND.
     let monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONEAREST) };
-    monitor_work_area(monitor).map(|area| screen_rect(ctx.pixels_per_point(), area))
+    monitor_info(monitor).map(|info| screen_rect(ctx.pixels_per_point(), info.rcWork))
 }
 
 #[cfg(windows)]
-fn monitor_work_area(
+fn monitor_info(
     monitor: windows_sys::Win32::Graphics::Gdi::HMONITOR,
-) -> Option<windows_sys::Win32::Foundation::RECT> {
+) -> Option<windows_sys::Win32::Graphics::Gdi::MONITORINFO> {
     use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO};
     let mut info = MONITORINFO {
         cbSize: std::mem::size_of::<MONITORINFO>() as u32,
@@ -210,7 +210,16 @@ fn monitor_work_area(
     };
     // `info` is writable for the duration of the call.
     let ok = unsafe { GetMonitorInfoW(monitor, &mut info) };
-    (ok != 0).then_some(info.rcWork)
+    (ok != 0).then_some(info)
+}
+
+#[cfg(windows)]
+fn monitor_for_rect(
+    rect: &windows_sys::Win32::Foundation::RECT,
+) -> Option<windows_sys::Win32::Graphics::Gdi::MONITORINFO> {
+    use windows_sys::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MonitorFromRect};
+    // The rectangle is valid for the duration of the call.
+    monitor_info(unsafe { MonitorFromRect(rect, MONITOR_DEFAULTTONEAREST) })
 }
 
 #[cfg(windows)]
@@ -253,6 +262,59 @@ fn window_rect(
 }
 
 #[cfg(windows)]
+pub fn keep_clock_on_screen(frame: &eframe::Frame) {
+    if let Some(handle) = window_handle(frame)
+        && let Some(rect) = window_rect(handle)
+        && let Some(monitor) = monitor_for_rect(&rect)
+    {
+        move_window_if_needed(handle, rect, limit_clock_position(rect, monitor.rcMonitor));
+    }
+}
+
+#[cfg(windows)]
+fn limit_clock_position(
+    clock: windows_sys::Win32::Foundation::RECT,
+    monitor: windows_sys::Win32::Foundation::RECT,
+) -> (i32, i32) {
+    let limit_axis = |start: i32, end: i32, near: i32, far: i32| {
+        let size = end - start;
+        // Require strictly more than half of the window on each axis, in physical pixels.
+        let visible = (size / 2 + 1).min(far - near);
+        start.clamp(near - (size - visible), far - visible)
+    };
+    (
+        limit_axis(clock.left, clock.right, monitor.left, monitor.right),
+        limit_axis(clock.top, clock.bottom, monitor.top, monitor.bottom),
+    )
+}
+
+#[cfg(windows)]
+fn move_window_if_needed(
+    handle: windows_sys::Win32::Foundation::HWND,
+    current: windows_sys::Win32::Foundation::RECT,
+    (x, y): (i32, i32),
+) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos,
+    };
+    if (current.left, current.top) == (x, y) {
+        return;
+    }
+    // Move only the live window, bypassing Windows' optional outline-only drag loop.
+    unsafe {
+        SetWindowPos(
+            handle,
+            std::ptr::null_mut(),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
+#[cfg(windows)]
 struct LiveDrag {
     offset_x: i32,
     offset_y: i32,
@@ -287,48 +349,41 @@ impl LiveDrag {
         snap_to_edges: bool,
     ) {
         use windows_sys::Win32::Foundation::RECT;
-        use windows_sys::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MonitorFromRect};
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos,
-        };
-
         let Some(current) = window_rect(handle) else {
             return;
         };
-        let (mut x, mut y) = (cursor.x - self.offset_x, cursor.y - self.offset_y);
+        let (x, y) = (cursor.x - self.offset_x, cursor.y - self.offset_y);
+        let width = current.right - current.left;
+        let height = current.bottom - current.top;
+        let rect_at = |left, top| RECT {
+            left,
+            top,
+            right: left + width,
+            bottom: top + height,
+        };
+        let mut candidate = rect_at(x, y);
+        let Some(monitor) = monitor_for_rect(&candidate) else {
+            move_window_if_needed(handle, current, (x, y));
+            return;
+        };
         if snap_to_edges {
-            // Always check the unsnapped cursor position so moving away releases the clock.
-            let candidate = RECT {
-                left: x,
-                top: y,
-                right: x + current.right - current.left,
-                bottom: y + current.bottom - current.top,
-            };
-            let monitor = unsafe { MonitorFromRect(&candidate, MONITOR_DEFAULTTONEAREST) };
+            // Check the unsnapped cursor position so moving away releases the clock.
             let placement = Placement {
                 clock: screen_rect(scale, candidate),
-                work_area: monitor_work_area(monitor).map(|area| screen_rect(scale, area)),
+                work_area: Some(screen_rect(scale, monitor.rcWork)),
             };
             if let Some(position) = placement.snapped_position() {
-                x = (position.x * scale).round() as i32;
-                y = (position.y * scale).round() as i32;
+                candidate = rect_at(
+                    (position.x * scale).round() as i32,
+                    (position.y * scale).round() as i32,
+                );
             }
         }
-        if (current.left, current.top) == (x, y) {
-            return;
-        }
-        // Move only the live window, bypassing Windows' optional outline-only drag loop.
-        unsafe {
-            SetWindowPos(
-                handle,
-                std::ptr::null_mut(),
-                x,
-                y,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-            );
-        }
+        move_window_if_needed(
+            handle,
+            current,
+            limit_clock_position(candidate, monitor.rcMonitor),
+        );
     }
 }
 
@@ -367,4 +422,49 @@ fn primary_button_down(_ctx: &egui::Context) -> bool {
 #[cfg(not(windows))]
 fn primary_button_down(ctx: &egui::Context) -> bool {
     ctx.input(|input| input.pointer.primary_down())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::limit_clock_position;
+    use windows_sys::Win32::Foundation::RECT;
+
+    fn rect(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
+        RECT {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    #[test]
+    fn requires_more_than_half_visible_on_both_axes() {
+        let monitor = rect(0, 0, 1920, 1080);
+        assert_eq!(
+            limit_clock_position(rect(-60, -50, 60, 51), monitor),
+            (-59, -50)
+        );
+        assert_eq!(
+            limit_clock_position(rect(1860, 1030, 1980, 1131), monitor),
+            (1859, 1029)
+        );
+        assert_eq!(
+            limit_clock_position(rect(80, 90, 200, 211), monitor),
+            (80, 90)
+        );
+    }
+
+    #[test]
+    fn limits_position_again_when_a_monitor_is_removed() {
+        let clock = rect(-1300, 1300, -1180, 1421);
+        assert_eq!(
+            limit_clock_position(clock, rect(-1920, 300, 0, 1500)),
+            (-1300, 1300)
+        );
+        assert_eq!(
+            limit_clock_position(clock, rect(0, 0, 1920, 1080)),
+            (-59, 1019)
+        );
+    }
 }

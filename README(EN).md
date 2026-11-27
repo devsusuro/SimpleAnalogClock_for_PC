@@ -1,10 +1,11 @@
 # Simple Analog Clock for PC
 
-Version 0.1.16 · Analog desktop clock for Windows, macOS, and Linux
+Version 0.1.17 · Analog desktop clock for Windows, macOS, and Linux
 
 To use the Windows x64 release, run `Simple Analog Clock for PC.exe`. See the build instructions below to compile it from source. The app starts in Korean by default.
 
 - On Windows, the clock stays visible on the desktop and its window is hidden from the taskbar. To quit, choose **Close** in the right-click menu.
+- On Windows, more than half of the clock's width and height stay within a single monitor. If connecting or disconnecting a monitor changes the display layout, the clock adjusts its position as needed.
 
 ## Building from source
 
